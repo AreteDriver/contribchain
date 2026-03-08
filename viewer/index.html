@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ContribChain ID</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.0/ethers.umd.min.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div id="app" class="max-w-4xl mx-auto px-4 py-12">
+    <!-- Header -->
+    <div class="text-center mb-12">
+      <h1 class="text-4xl font-bold text-white mb-2">ContribChain ID</h1>
+      <p class="text-gray-400">Verifiable on-chain proof of open source contribution</p>
+    </div>
+
+    <!-- Search -->
+    <div class="flex gap-3 mb-10">
+      <input
+        id="search-input"
+        type="text"
+        placeholder="Wallet address (0x...) or GitHub username"
+        class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+      />
+      <button
+        id="search-btn"
+        onclick="doSearch()"
+        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+      >
+        Look Up
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden text-center py-8">
+      <p class="text-gray-400">Loading contributions...</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-6">
+      <p id="error-text" class="text-red-300"></p>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+      <!-- Summary -->
+      <div class="grid grid-cols-3 gap-4 mb-8">
+        <div class="bg-gray-900 rounded-lg p-5 text-center">
+          <p class="text-3xl font-bold text-blue-400" id="total-count">0</p>
+          <p class="text-gray-400 text-sm mt-1">Total Contributions</p>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-5 text-center">
+          <p class="text-3xl font-bold text-green-400" id="repo-count">0</p>
+          <p class="text-gray-400 text-sm mt-1">Repos</p>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-5 text-center">
+          <p class="text-3xl font-bold text-purple-400" id="wallet-display">-</p>
+          <p class="text-gray-400 text-sm mt-1">Wallet</p>
+        </div>
+      </div>
+
+      <!-- Type breakdown -->
+      <div class="flex gap-4 mb-8">
+        <span class="bg-blue-900/40 text-blue-300 px-3 py-1 rounded text-sm">
+          PR Merges: <strong id="pr-count">0</strong>
+        </span>
+        <span class="bg-green-900/40 text-green-300 px-3 py-1 rounded text-sm">
+          Issues: <strong id="issue-count">0</strong>
+        </span>
+        <span class="bg-yellow-900/40 text-yellow-300 px-3 py-1 rounded text-sm">
+          Reviews: <strong id="review-count">0</strong>
+        </span>
+      </div>
+
+      <!-- Share -->
+      <button
+        onclick="copyShareLink()"
+        class="text-sm text-gray-400 hover:text-white mb-6 underline"
+      >
+        Copy share link
+      </button>
+
+      <!-- Table -->
+      <table class="w-full text-left text-sm">
+        <thead>
+          <tr class="text-gray-400 border-b border-gray-800">
+            <th class="pb-3 cursor-pointer" onclick="sortTable('type')">Type</th>
+            <th class="pb-3 cursor-pointer" onclick="sortTable('repo')">Repo</th>
+            <th class="pb-3 cursor-pointer" onclick="sortTable('time')">Time</th>
+            <th class="pb-3">Proof</th>
+          </tr>
+        </thead>
+        <tbody id="attestation-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+// ---- Config ----
+const CONFIG = {
+  contractAddress: "",  // Set after deploy
+  rpcUrl: "https://mainnet.base.org",
+  registryUrl: "",      // Set after deploy
+  explorerBase: "https://basescan.org",
+};
+
+const CONTRIB_ATTEST_ABI = [
+  "event ContributionAttested(address indexed contributor, bytes32 indexed repoHash, bytes32 indexed contentHash, uint8 contribType, uint256 timestamp)",
+];
+
+const TYPE_LABELS = ["PR Merge", "Issue Close", "Review Approve"];
+const TYPE_COLORS = ["text-blue-300", "text-green-300", "text-yellow-300"];
+
+let attestations = [];
+let sortField = "time";
+let sortAsc = false;
+
+// ---- Search ----
+async function doSearch() {
+  const input = document.getElementById("search-input").value.trim();
+  if (!input) return;
+
+  showLoading(true);
+  hideError();
+  hideResults();
+
+  try {
+    let address = input;
+
+    // If not a wallet address, look up via registry
+    if (!input.startsWith("0x")) {
+      const resp = await fetch(`${CONFIG.registryUrl}/wallet/${encodeURIComponent(input)}`);
+      if (resp.status === 404) {
+        throw new Error(`No wallet registered for "${input}"`);
+      }
+      const data = await resp.json();
+      address = data.wallet;
+    }
+
+    await loadContributions(address);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+async function loadContributions(address) {
+  const provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
+  const contract = new ethers.Contract(CONFIG.contractAddress, CONTRIB_ATTEST_ABI, provider);
+
+  // Query events in chunks to avoid RPC limits
+  const currentBlock = await provider.getBlockNumber();
+  const chunkSize = 10000;
+  attestations = [];
+
+  for (let from = 0; from <= currentBlock; from += chunkSize) {
+    const to = Math.min(from + chunkSize - 1, currentBlock);
+    const filter = contract.filters.ContributionAttested(address);
+    const events = await contract.queryFilter(filter, from, to);
+
+    for (const ev of events) {
+      attestations.push({
+        contributor: ev.args[0],
+        repoHash: ev.args[1],
+        contentHash: ev.args[2],
+        type: Number(ev.args[3]),
+        timestamp: Number(ev.args[4]),
+        txHash: ev.transactionHash,
+      });
+    }
+  }
+
+  if (attestations.length === 0) {
+    throw new Error("No attestations found for this address");
+  }
+
+  renderResults(address);
+}
+
+// ---- Render ----
+function renderResults(address) {
+  const repos = new Set(attestations.map((a) => a.repoHash));
+  const prCount = attestations.filter((a) => a.type === 0).length;
+  const issueCount = attestations.filter((a) => a.type === 1).length;
+  const reviewCount = attestations.filter((a) => a.type === 2).length;
+
+  document.getElementById("total-count").textContent = attestations.length;
+  document.getElementById("repo-count").textContent = repos.size;
+  document.getElementById("wallet-display").textContent =
+    address.slice(0, 6) + "..." + address.slice(-4);
+  document.getElementById("pr-count").textContent = prCount;
+  document.getElementById("issue-count").textContent = issueCount;
+  document.getElementById("review-count").textContent = reviewCount;
+
+  renderTable();
+  document.getElementById("results").classList.remove("hidden");
+
+  // Update URL
+  history.replaceState(null, "", `/id/${address}`);
+}
+
+function renderTable() {
+  const sorted = [...attestations].sort((a, b) => {
+    let va, vb;
+    if (sortField === "type") { va = a.type; vb = b.type; }
+    else if (sortField === "repo") { va = a.repoHash; vb = b.repoHash; }
+    else { va = a.timestamp; vb = b.timestamp; }
+    return sortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+  });
+
+  const tbody = document.getElementById("attestation-table");
+  tbody.innerHTML = sorted
+    .map(
+      (a) => `
+    <tr class="border-b border-gray-800/50">
+      <td class="py-3 ${TYPE_COLORS[a.type]}">${TYPE_LABELS[a.type]}</td>
+      <td class="py-3 text-gray-300 font-mono text-xs">${a.repoHash.slice(0, 10)}...</td>
+      <td class="py-3 text-gray-400">${new Date(a.timestamp * 1000).toLocaleDateString()}</td>
+      <td class="py-3">
+        <a href="${CONFIG.explorerBase}/tx/${a.txHash}" target="_blank"
+           class="text-blue-400 hover:text-blue-300 text-xs">
+          ${a.txHash.slice(0, 10)}...
+        </a>
+      </td>
+    </tr>
+  `
+    )
+    .join("");
+}
+
+function sortTable(field) {
+  if (sortField === field) sortAsc = !sortAsc;
+  else { sortField = field; sortAsc = true; }
+  renderTable();
+}
+
+// ---- Share ----
+function copyShareLink() {
+  const input = document.getElementById("search-input").value.trim();
+  const url = `${window.location.origin}/id/${input}`;
+  navigator.clipboard.writeText(url);
+}
+
+// ---- UI helpers ----
+function showLoading(show) {
+  document.getElementById("loading").classList.toggle("hidden", !show);
+}
+function showError(msg) {
+  document.getElementById("error-text").textContent = msg;
+  document.getElementById("error").classList.remove("hidden");
+}
+function hideError() {
+  document.getElementById("error").classList.add("hidden");
+}
+function hideResults() {
+  document.getElementById("results").classList.add("hidden");
+}
+
+// ---- Init: check URL for direct link ----
+(function init() {
+  const path = window.location.pathname;
+  const match = path.match(/\/id\/(.+)/);
+  if (match) {
+    document.getElementById("search-input").value = match[1];
+    doSearch();
+  }
+})();
+</script>
+</body>
+</html>

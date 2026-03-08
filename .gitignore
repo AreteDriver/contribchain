@@ -1,0 +1,20 @@
+node_modules/
+artifacts/
+cache/
+typechain-types/
+.env
+!.env.example
+coverage/
+coverage.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Action build
+action/dist/
+
+# OS
+.DS_Store

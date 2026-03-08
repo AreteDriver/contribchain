@@ -1,0 +1,22 @@
+{
+  "name": "contribchain",
+  "version": "0.1.0",
+  "description": "Proof of Contribution + Payment Rails for Open Source on Base L2",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network base-sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network base-mainnet",
+    "slither": "slither contracts/"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "@openzeppelin/contracts-upgradeable": "^5.0.0",
+    "@openzeppelin/hardhat-upgrades": "^3.0.0",
+    "hardhat": "^2.22.0",
+    "ethers": "^6.13.0",
+    "dotenv": "^16.4.0"
+  },
+  "license": "MIT"
+}

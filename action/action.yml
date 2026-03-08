@@ -1,0 +1,26 @@
+name: "ContribChain Attestation"
+description: "Attest merged contributions to ContribAttest on Base L2"
+author: "AreteDriver"
+
+inputs:
+  contract-address:
+    description: "ContribAttest contract address on Base"
+    required: true
+  repo-wallet:
+    description: "Private key of the registered repo wallet (from GitHub Secrets)"
+    required: true
+  contributor-registry:
+    description: "URL of the ContribRegistry API"
+    required: true
+  rpc-url:
+    description: "Base RPC endpoint URL"
+    required: false
+    default: "https://mainnet.base.org"
+
+runs:
+  using: "node20"
+  main: "dist/action.js"
+
+branding:
+  icon: "check-circle"
+  color: "blue"

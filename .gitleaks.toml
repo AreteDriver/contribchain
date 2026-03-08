@@ -1,0 +1,7 @@
+title = "ContribChain gitleaks config"
+
+[allowlist]
+  paths = [
+    '''\.env\.example''',
+    '''test/''',
+  ]
